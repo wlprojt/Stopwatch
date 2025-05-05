@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.Build
@@ -44,6 +45,10 @@ class StopwatchService : Service() {
     private val _watchStart = MutableStateFlow(false)
     val watchStart: StateFlow<Boolean> = _watchStart
 
+    private val sharedPreferences by lazy {
+        getSharedPreferences("stopwatch_prefs", Context.MODE_PRIVATE)
+    }
+
     override fun onBind(intent: Intent?): IBinder = StopwatchBinder()
 
     @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
@@ -59,6 +64,8 @@ class StopwatchService : Service() {
             _hours.value = hours
             _minutes.value = minutes
             _seconds.value = seconds
+            updateTimeState()
+            saveState() // Save state periodically
             updateNotification()
         }
     }
@@ -67,6 +74,7 @@ class StopwatchService : Service() {
     fun stopStopwatch() {
         _watchStart.value = false
         timer?.cancel()
+        saveState()
         updateNotification()
     }
 
@@ -79,7 +87,37 @@ class StopwatchService : Service() {
         _hours.value = "00"
         _minutes.value = "00"
         _seconds.value = "00"
+        updateTimeState()
+        clearState()
         notificationManager.cancel(1)
+    }
+
+    private fun updateTimeState() {
+        val hours = (duration / 3600).toString().padStart(2, '0')
+        val minutes = ((duration % 3600) / 60).toString().padStart(2, '0')
+        val seconds = (duration % 60).toString().padStart(2, '0')
+        _timeState.value = "$hours:$minutes:$seconds"
+    }
+
+    private fun saveState() {
+        sharedPreferences.edit()
+            .putLong("duration", duration)
+            .putBoolean("isRunning", timer != null)
+            .apply()
+    }
+
+    @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
+    private fun restoreState() {
+        duration = sharedPreferences.getLong("duration", 0L)
+        if (sharedPreferences.getBoolean("isRunning", false)) {
+            startStopwatch()
+        } else {
+            updateTimeState()
+        }
+    }
+
+    private fun clearState() {
+        sharedPreferences.edit().clear().apply()
     }
 
     private fun createServiceIntent(action: String): Intent {
@@ -148,9 +186,11 @@ class StopwatchService : Service() {
 
 
 
+    @RequiresPermission(Manifest.permission.POST_NOTIFICATIONS)
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        restoreState()
     }
 
     private fun createNotificationChannel() {
